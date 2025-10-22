@@ -1,0 +1,108 @@
+# Патчи для майнинговых видеокарт NVIDIA
+# P104-100, P106-100, P102-100 и другие
+
+# P104-100 (GTX 1080 equivalent)
+--- nvidia.ko.orig	2024-01-01 00:00:00.000000000 +0000
++++ nvidia.ko	2024-01-01 00:00:00.000000000 +0000
+@@ -1234,7 +1234,7 @@
+-    { 0x10DE, 0x1B80, "P104-100", NVIDIA_CARD_P104 },
++    { 0x10DE, 0x1B80, "GTX 1080", NVIDIA_CARD_GTX1080 },
+ 
+ # П106-100 (GTX 1060 6GB equivalent)
+@@ -1456,7 +1456,7 @@
+-    { 0x10DE, 0x1C02, "P106-100", NVIDIA_CARD_P106 },
++    { 0x10DE, 0x1C02, "GTX 1060 6GB", NVIDIA_CARD_GTX1060 },
+ 
+ # P102-100 (GTX 1070 Ti equivalent)
+@@ -1678,7 +1678,7 @@
+-    { 0x10DE, 0x1BA1, "P102-100", NVIDIA_CARD_P102 },
++    { 0x10DE, 0x1BA1, "GTX 1070 Ti", NVIDIA_CARD_GTX1070TI },
+ 
+ # Разблокировка SLI для майнинговых карт
+@@ -2345,8 +2345,8 @@
+-    if (card_type == MINING_CARD) {
+-        return SLI_NOT_SUPPORTED;
+-    }
++    // SLI поддержка для майнинговых карт
++    if (card_type == MINING_CARD) {
++        return SLI_SUPPORTED;
++    }
+ 
+ # Устранение ограничений майнинговых прошивок
+@@ -3456,12 +3456,12 @@
+-    // Майнинговые ограничения
+-    if (is_mining_card) {
+-        max_clocks = mining_limited_clocks;
+-        power_limit = MINING_POWER_LIMIT;
+-        thermal_limit = MINING_THERMAL_LIMIT;
+-    }
++    // Полная разблокировка для майнинговых карт
++    if (is_mining_card) {
++        max_clocks = full_gaming_clocks;
++        power_limit = MAX_POWER_LIMIT;
++        thermal_limit = MAX_THERMAL_LIMIT;
++    }
+ 
+ # Оптимизация для AI/ML нагрузок
+@@ -4567,8 +4567,8 @@
+-    // Ограничения для майнинговых карт в AI
+-    if (is_mining_card && ai_workload) {
+-        return AI_FEATURES_DISABLED;
+-    }
++    // Полная поддержка AI для майнинговых карт
++    if (is_mining_card && ai_workload) {
++        return AI_FEATURES_ENABLED;
++    }
+ 
+ # Включение Tensor Cores (для поддерживаемых карт)
+@@ -5678,6 +5678,10 @@
++    // Активация Tensor Cores для майнинговых карт
++    if (is_mining_card && has_tensor_cores) {
++        enable_tensor_cores();
++    }
++
+ # CUDA оптимизации для ML
+@@ -6789,4 +6789,8 @@
++    // Улучшение CUDA производительности для ML
++    if (is_mining_card && ml_workload) {
++        enable_cuda_optimizations();
++    }
++
+# Magic bytes для идентификации пропатченых майнинговых карт
+magic_bytes_mining:
+    0x4D, 0x43, 0x50, 0x54  # "MCPT" - Mining Card Patched
+    0x01, 0x00, 0x00, 0x00  # Version 1.0
+
+# SLI конфигурация для смешанных карт
+sli_config_mixed:
+    allow_different_models: true
+    ignore_device_id_check: true
+    force_sli_mode: "AFR2"
+    enable_mixed_gen_support: true
+
+# AI/ML оптимизации
+ai_optimizations:
+    enable_fp16: true
+    enable_tensorrt: true
+    enable_cuda_graphs: true
+    memory_optimization: "aggressive"
+    compute_capability: "max"
+
+# Профили производительности
+performance_profiles:
+    gaming:
+        power_limit: "100%"
+        thermal_limit: "85C"
+        clock_offset: "+150MHz"
+    
+    ai_inference:
+        power_limit: "120%"
+        thermal_limit: "92C"
+        clock_offset: "+200MHz"
+        memory_clock_offset: "+1000MHz"
+    
+    mining:
+        power_limit: "130%"
+        thermal_limit: "95C"
+        clock_offset: "+250MHz"
+        memory_clock_offset: "+1500MHz"

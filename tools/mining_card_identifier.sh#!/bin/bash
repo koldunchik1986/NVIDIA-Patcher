@@ -1,0 +1,294 @@
+/dev/null 2>&1; then
+            missing_deps+=("$dep")
+        fi
+    done
+    
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        error "Отсутствуют зависимости: ${missing_deps[*]}"
+        return 1
+    fi
+    
+    success "Все зависимости найдены"
+}
+
+# Идентификация через lspci
+identify_via_lspci() {
+    log "Идентификация карт через lspci..."
+    
+    local nvidia_cards=()
+    
+    while IFS= read -r line; do
+        if [[ $line =~ (VGA|3D) ]] && [[ $line =~ NVIDIA ]]; then
+            local pci_address=$(echo "$line" | awk '{print $1}')
+            local device_info=$(echo "$line" | grep -o '\[10de:[0-9a-f]*\]')
+            
+            if [[ $device_info =~ \[10de:([0-9a-f]*)\] ]]; then
+                local device_id="${BASH_REMATCH[1]}"
+                local card_info=$(identify_card_by_device_id "$device_id")
+                
+                if [[ -n "$card_info" ]]; then
+                    nvidia_cards+=("$pci_address:$device_id:$card_info")
+                fi
+            fi
+        fi
+    done <<< "$(lspci -nn -D)"
+    
+    echo "${nvidia_cards[@]}"
+}
+
+# Идентификация карты по device ID
+identify_card_by_device_id() {
+    local device_id="$1"
+    
+    for model in "${!MINING_CARDS[@]}"; do
+        local card_data="${MINING_CARDS[$model]}"
+        local card_device_id=$(echo "$card_data" | cut -d':' -f1)
+        
+        if [[ "$device_id" == "$card_device_id" ]]; then
+            echo "$model:$card_data"
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Идентификация через nvidia-smi
+identify_via_nvidia_smi() {
+    log "Идентификация карт через nvidia-smi..."
+    
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        warn "nvidia-smi не найден, пропуск..."
+        return
+    fi
+    
+    local nvidia_cards=()
+    
+    while IFS= read -r line; do
+        local gpu_id=$(echo "$line" | awk '{print $1}')
+        local gpu_name=$(echo "$line" | awk -F'[][]' '{print $2}')
+        
+        # Проверяем на майнинговые паттерны в названии
+        if [[ "$gpu_name" =~ (P104|P106|P102) ]]; then
+            nvidia_cards+=("nvidia-smi:$gpu_id:$gpu_name")
+        fi
+    done <<< "$(nvidia-smi --query-gpu=index,name --format=csv,noheader,nounits 2>/dev/null)"
+    
+    echo "${nvidia_cards[@]}"
+}
+
+# Анализ конфигурации системы
+analyze_system_configuration() {
+    log "Анализ системной конфигурации..."
+    
+    local lspci_cards=($(identify_via_lspci))
+    local smi_cards=($(identify_via_nvidia_smi))
+    
+    info "Всего найдено NVIDIA карт: $((${#lspci_cards[@]} + ${#smi_cards[@]}))"
+    
+    if [[ ${#lspci_cards[@]} -gt 0 ]]; then
+        info "Карты обнаруженные через lspci:"
+        for card in "${lspci_cards[@]}"; do
+            parse_and_display_card_info "$card" "lspci"
+        done
+    fi
+    
+    if [[ ${#smi_cards[@]} -gt 0 ]]; then
+        info "Карты обнаруженные через nvidia-smi:"
+        for card in "${smi_cards[@]}"; do
+            parse_and_display_card_info "$card" "nvidia-smi"
+        done
+    fi
+    
+    # Анализ SLI возможностей
+    analyze_sli_feasibility "${lspci_cards[@]}" "${smi_cards[@]}"
+}
+
+# Парсинг и отображение информации о карте
+parse_and_display_card_info() {
+    local card_string="$1"
+    local source="$2"
+    
+    IFS=':' read -r pci_address device_id card_data <<< "$card_string"
+    
+    if [[ "$source" == "lspci" ]]; then
+        IFS=':' read -r model equivalent_gaming chip memory_size <<< "$card_data"
+        
+        success "Майнинговая карта обнаружена:"
+        info "  Модель: $model"
+        info "  Эквивалент: $equivalent_gaming"
+        info "  Чип: $chip"
+        info "  Память: ${memory_size}MB"
+        info "  PCI адрес: $pci_address"
+        info "  Device ID: $device_id"
+        info "  Источник: $source"
+        echo ""
+    else
+        info "GPU #$pci_address: $device_data (источник: nvidia-smi)"
+    fi
+}
+
+# Анализ возможностей SLI
+analyze_sli_feasibility() {
+    local lspci_cards=("$@")
+    
+    log "Анализ SLI возможностей..."
+    
+    # Группировка карт по моделям
+    declare -A card_groups
+    
+    for card in "${lspci_cards[@]}"; do
+        IFS=':' read -r pci_address device_id card_data <<< "$card"
+        IFS=':' read -r model equivalent_gaming chip memory_size <<< "$card_data"
+        
+        card_groups["$model"]=$((${card_groups["$model"]:-0} + 1))
+    done
+    
+    local total_mining_cards=$((${#lspci_cards[@]}))
+    
+    if [[ $total_mining_cards -lt 2 ]]; then
+        warn "Недостаточно карт для SLI (нужно минимум 2)"
+        return
+    fi
+    
+    success "SLI анализ:"
+    info "  Всего майнинговых карт: $total_mining_cards"
+    
+    for model in "${!card_groups[@]}"; do
+        local count="${card_groups[$model]}"
+        if [[ $count -ge 2 ]]; then
+            success "  ✓ $model: $count карт (SLI возможен)"
+        else
+            info "  $model: $count карт (нужны разные карты для смешанного SLI)"
+        fi
+    done
+    
+    # Рекомендации по SLI
+    if [[ $total_mining_cards -ge 2 ]]; then
+        echo ""
+        info "Рекомендуемые SLI конфигурации:"
+        
+        for model in "${!card_groups[@]}"; do
+            local count="${card_groups[$model]}"
+            if [[ $count -ge 2 ]]; then
+                info "  • Одинаковые карты: $count x $model"
+            fi
+        done
+        
+        if [[ $total_mining_cards -gt 2 ]]; then
+            info "  • Смешанная конфигурация: все доступные карты"
+        fi
+    fi
+}
+
+# Проверка AI/ML совместимости
+check_ai_compatibility() {
+    log "Проверка совместимости для AI/ML..."
+    
+    local lspci_cards=($(identify_via_lspci))
+    
+    if [[ ${#lspci_cards[@]} -eq 0 ]]; then
+        warn "Майнинговые карты не найдены"
+        return
+    fi
+    
+    local has_tensor_cores=false
+    local total_memory=0
+    local supported_chips=()
+    
+    for card in "${lspci_cards[@]}"; do
+        IFS=':' read -r pci_address device_id card_data <<< "$card"
+        IFS=':' read -r model equivalent_gaming chip memory_size <<< "$card_data"
+        
+        total_memory=$((total_memory + memory_size))
+        supported_chips+=("$chip")
+        
+        # Проверка на Tensor Cores (Turing и новее)
+        if [[ "$chip" =~ ^(TU|GA) ]]; then
+            has_tensor_cores=true
+        fi
+    done
+    
+    success "AI/ML анализ:"
+    info "  Всего карт: ${#lspci_cards[@]}"
+    info "  Суммарная память: ${total_memory}MB ($((total_memory / 1024))GB)"
+    info "  Чипы: ${supported_chips[*]}"
+    info "  Tensor Cores: $([ "$has_tensor_cores" = true ] && echo "Да" || echo "Нет")"
+    
+    # Рекомендации по AI профилям
+    echo ""
+    info "Рекомендуемые AI профили:"
+    
+    if [[ "$has_tensor_cores" = true ]]; then
+        success "  • PyTorch Training (Tensor Cores доступны)"
+        success "  • TensorFlow Inference (оптимизировано)"
+        success "  • LLM Inference (ускорение attention)"
+    else
+        info "  • PyTorch Training (без Tensor Cores)"
+        info "  • TensorFlow Inference (базовая)"
+    fi
+    
+    if [[ $total_memory -ge 16384 ]]; then
+        success "  • Large Batch Training (память > 16GB)"
+    fi
+    
+    if [[ ${#lspci_cards[@]} -gt 1 ]]; then
+        success "  • Multi-GPU Training (несколько GPU)"
+    fi
+}
+
+# Создание отчета
+generate_report() {
+    local report_file="/tmp/mining_cards_report.txt"
+    
+    log "Создание отчета: $report_file"
+    
+    {
+        echo "Отчет идентификации майнинговых карт NVIDIA"
+        echo "Сгенерирован: $(date)"
+        echo "=========================================="
+        echo ""
+        
+        analyze_system_configuration
+        echo ""
+        
+        check_ai_compatibility
+        echo ""
+        
+        echo "Рекомендации:"
+        echo "1. Используйте скрипт патчера для модификации драйверов"
+        echo "2. Включите SLI для повышения производительности"
+        echo "3. Примените AI оптимизации для ML нагрузок"
+        echo "4. Настройте профили производительности"
+        
+    } > "$report_file"
+    
+    success "Отчет сохранен: $report_file"
+}
+
+# Основная функция
+main() {
+    echo "========================================"
+    echo "Идентификатор майнинговых карт NVIDIA"
+    echo "========================================"
+    echo ""
+    
+    # Проверка прав root
+    if [[ $EUID -ne 0 ]]; then
+        warn "Рекомендуется запускать с правами суперпользователя"
+    fi
+    
+    check_dependencies
+    analyze_system_configuration
+    check_ai_compatibility
+    generate_report
+    
+    echo ""
+    success "Идентификация завершена!"
+    info "Логи сохранены: $LOG_FILE"
+}
+
+# Запуск
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

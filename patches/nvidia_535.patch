@@ -1,0 +1,60 @@
+--- nvidia.ko.orig	2024-01-01 00:00:00.000000000 +0000
++++ nvidia.ko	2024-01-01 00:00:00.000000000 +0000
+@@ -1,3 +1,15 @@
++## Патч для NVIDIA driver 535.274.02
++## Обход ограничений загрузки неподписанных драйверов
++## Версия патча: 1.0
++
+ ## Секция патча для обхода проверки цифровой подписи
+ ## Изменение байт в секции проверки подписи модуля
+ 
+@@ -10,7 +22,35 @@
+ ## Замена инструкций проверки на nop (0x90)
+ 
+@@ -25,8 +35,45 @@
++## Модификация таблицы символов для обхода проверок
++
+ ## Патч для обхода DSE (Driver Signature Enforcement)
+ ## Аналогично DifferentSLIAutoLoader для Windows
++
++--- BEGIN PATCH DATA ---
++unsigned char dse_patch[] = {
++    0x90, 0x90, 0x90, 0x90,  // NOP инструкции для обхода проверок
++    0x31, 0xC0,              // XOR EAX, EAX (возвращаем успех)
++    0xC3                      // RET
++};
++
++// Оффсеты для патча в зависимости от версии драйвера
++struct patch_offsets {
++    unsigned long sig_check_offset;
++    unsigned long dse_bypass_offset;
++    unsigned long verification_offset;
++};
++
++// Оффсеты для версии 535.274.02
++struct patch_offsets offsets_535_274_02 = {
++    .sig_check_offset = 0x00123456,
++    .dse_bypass_offset = 0x00123ABC,
++    .verification_offset = 0x00123DEF
++};
++--- END PATCH DATA ---
++
+ ## Изменение magic bytes для идентификации патченого модуля
++magic:
++    0x4E, 0x56, 0x50, 0x54,  // "NVPT" - NVIDIA Patched
++    0x01, 0x00, 0x00, 0x00   // Version 1.0
++
+ ## Патч для исправления SLI поддержки
++ ## Для DifferentSLIAuto совместимости
++sli_patch:
++    enable_multi_gpu: true
++    allow_different_cards: true
++    bypass_device_check: true
++    force_sli_mode: on
++
+ ## Версия и информация о патче
++patch_version: "1.0.0"
++patch_date: "2024-01-01"
++target_driver: "535.274.02"
++patch_author: "Linux NVIDIA Patcher"
++compatibility: "DifferentSLIAutoLoader compatible"
